@@ -1,0 +1,72 @@
+name: CloudFox Recon
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'CloudFox command to run (see BishopFox/cloudfox wiki for the full list)'
+        required: true
+        type: choice
+        default: 'all-checks'
+        options:
+          - all-checks
+          - inventory
+          - instances
+          - buckets
+          - access-keys
+          - principals
+          - permissions
+          - role-trusts
+          - secrets
+          - endpoints
+          - route53
+          - ecr
+          - lambda
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ROLE_ARN: arn:aws:iam::560120514170:role/stratus-red-team-lab
+
+jobs:
+  cloudfox:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install CloudFox
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/cloudfox.zip \
+            "https://github.com/BishopFox/cloudfox/releases/latest/download/cloudfox-linux-amd64.zip"
+          unzip -o /tmp/cloudfox.zip -d /tmp/cloudfox-extract
+          sudo mv /tmp/cloudfox-extract/cloudfox/cloudfox /usr/local/bin/cloudfox
+          chmod +x /usr/local/bin/cloudfox
+          cloudfox --help | head -5
+
+      - name: Confirm identity being enumerated
+        run: aws sts get-caller-identity
+
+      - name: Run CloudFox
+        run: |
+          set -euo pipefail
+          # No --profile: CloudFox supports plain AWS environment variables,
+          # which is exactly what configure-aws-credentials already set up
+          # via the OIDC-assumed role.
+          cloudfox aws ${{ inputs.command }}
+
+      - name: Upload CloudFox output as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudfox-results-${{ github.run_id }}
+          path: cloudfox-output/
+          retention-days: 14
+          if-no-files-found: warn
